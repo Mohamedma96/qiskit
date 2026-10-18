@@ -12,7 +12,7 @@
 
 //! A tensor value: a dense array over one of the supported dtypes.
 
-use ndarray::{ArcArrayD, ArrayD, IxDyn};
+use ndarray::{ArcArrayD, ArrayD, Axis, IxDyn};
 use num_complex::{Complex32, Complex64};
 
 use super::broadcast::{broadcast_elementwise, broadcast_shape};
@@ -248,6 +248,43 @@ impl Tensor {
             lhs: self.shape().to_vec(),
             rhs: shape.to_vec(),
         })
+    }
+
+    /// Select the positions `indices` along `axis`, in the order given.
+    ///
+    /// The result has the same number of dimensions, with `axis` resized to `indices.len()` and
+    /// every other axis untouched. An index may repeat, and an empty `indices` gives a zero-length
+    /// axis.
+    ///
+    /// To narrow several axes at once, use [`select_all_axes`](Self::select_all_axes).
+    ///
+    /// # Panics
+    ///
+    /// If `axis` is out of bounds for this tensor, or if any index is out of bounds for `axis`.
+    /// Callers that derive their indices from the axis itself, as a boolean mask does, cannot
+    /// trip either.
+    pub fn select_axis(&self, axis: usize, indices: &[usize]) -> Tensor {
+        let axis = Axis(axis);
+        macro_rules! select {
+            ($variant:ident, $arr:expr) => {
+                Tensor::$variant($arr.select(axis, indices).into_shared())
+            };
+        }
+        match self {
+            Tensor::C128(a) => select!(C128, a),
+            Tensor::C64(a) => select!(C64, a),
+            Tensor::F64(a) => select!(F64, a),
+            Tensor::F32(a) => select!(F32, a),
+            Tensor::I64(a) => select!(I64, a),
+            Tensor::I32(a) => select!(I32, a),
+            Tensor::I16(a) => select!(I16, a),
+            Tensor::I8(a) => select!(I8, a),
+            Tensor::U64(a) => select!(U64, a),
+            Tensor::U32(a) => select!(U32, a),
+            Tensor::U16(a) => select!(U16, a),
+            Tensor::U8(a) => select!(U8, a),
+            Tensor::Bit(a) => select!(Bit, a),
+        }
     }
 
     /// Cast this tensor to `target`, consuming it. Returns `self` unchanged if already that dtype.
@@ -769,6 +806,66 @@ mod test {
                 "for target {shape:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_select_takes_the_indices_in_the_order_given() {
+        let t = Tensor::from([10.0_f64, 20.0, 30.0, 40.0]);
+        assert_eq!(
+            t.select_axis(0, &[3, 0, 2]),
+            Tensor::from([40.0_f64, 10.0, 30.0])
+        );
+    }
+
+    #[test]
+    fn test_select_may_repeat_an_index_or_take_none() {
+        let t = Tensor::from([1.0_f64, 2.0]);
+        assert_eq!(
+            t.select_axis(0, &[1, 1, 1]),
+            Tensor::from([2.0_f64, 2.0, 2.0])
+        );
+        let empty = t.select_axis(0, &[]);
+        assert_eq!(empty.shape(), &[0]);
+        assert_eq!(empty.dtype(), DType::F64);
+    }
+
+    #[test]
+    fn test_select_along_each_axis_of_a_matrix() {
+        let t = Tensor::F64(
+            ndarray::arr2(&[[1.0_f64, 2.0, 3.0], [4.0, 5.0, 6.0]])
+                .into_dyn()
+                .into_shared(),
+        );
+        assert_eq!(
+            t.select_axis(0, &[1]),
+            Tensor::F64(
+                ndarray::arr2(&[[4.0_f64, 5.0, 6.0]])
+                    .into_dyn()
+                    .into_shared()
+            )
+        );
+        assert_eq!(
+            t.select_axis(1, &[0, 2]),
+            Tensor::F64(
+                ndarray::arr2(&[[1.0_f64, 3.0], [4.0, 6.0]])
+                    .into_dyn()
+                    .into_shared()
+            )
+        );
+    }
+
+    #[test]
+    fn test_select_keeps_the_dtype() {
+        // `Bit` matters in particular, since a mask is a Bit tensor and masks get chained.
+        let bits = Tensor::Bit(ndarray::arr1(&[1_u8, 0, 1]).into_dyn().into_shared());
+        let selected = bits.select_axis(0, &[0, 2]);
+        assert_eq!(selected.dtype(), DType::Bit);
+        assert_eq!(
+            selected,
+            Tensor::Bit(ndarray::arr1(&[1_u8, 1]).into_dyn().into_shared())
+        );
+        let ints = Tensor::from([1_i16, 2, 3]);
+        assert_eq!(ints.select_axis(0, &[2, 1]), Tensor::from([3_i16, 2]));
     }
 
     // The pow method.

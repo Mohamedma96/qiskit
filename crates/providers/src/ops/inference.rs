@@ -12,7 +12,7 @@
 
 //! Various rules for output tensor type inference.
 
-use super::error::MathOpError;
+use super::error::{MathOpError, check_axis, check_dtype};
 use crate::tensor::{DType, Dim, TensorType, broadcast_dims, broadcast_dims_to, promotion};
 
 /// Which dtypes an op admits.
@@ -71,6 +71,71 @@ pub(super) fn reduce(
     Ok(TensorType {
         dtype: result_dtype(x.dtype),
         shape: super::error::reduced_shape(axis, &x.shape)?,
+    })
+}
+
+/// Return the largest size a dimension permits.
+fn upper_bound(dim: Dim) -> usize {
+    match dim {
+        Dim::Fixed(n) => n,
+        Dim::Bounded { max } => max,
+    }
+}
+
+/// Return whether `a` and `b` could be the same size at run time.
+///
+/// This is a necessary condition, not a sufficient one. Two bounded dimensions can always coincide,
+/// since both admit zero, so a pass here is not a proof that they do. Proving it is what
+/// bounded-axis provenance is for.
+fn may_equal(a: Dim, b: Dim) -> bool {
+    match (a, b) {
+        (Dim::Fixed(n), Dim::Fixed(m)) => n == m,
+        (Dim::Fixed(n), Dim::Bounded { max }) | (Dim::Bounded { max }, Dim::Fixed(n)) => n <= max,
+        (Dim::Bounded { .. }, Dim::Bounded { .. }) => true,
+    }
+}
+
+/// Infer the result type of selecting along one or more axes with boolean masks.
+///
+/// The dtype and every unmasked axis pass through. Each masked axis becomes [`Dim::Bounded`]
+/// whatever it was before, because the number of entries a mask selects is not known from the
+/// types alone.
+///
+/// `masks` pairs each axis with the type of the mask applied to it, in the operand order the op
+/// declares. The axes are masked independently, so the surviving region is the outer product of
+/// the per-axis selections and stays rectangular; a mask whose shape matched the operand's would
+/// instead select a ragged region, which no dense shape can describe.
+pub(super) fn boolean_mask(
+    x: &TensorType,
+    masks: &[(usize, &TensorType)],
+) -> Result<TensorType, MathOpError> {
+    let mut shape = x.shape.clone();
+    for (operand, &(axis, mask)) in masks.iter().enumerate() {
+        check_axis(axis, x.shape.len())?;
+        // Operand 0 is the data, so the mask for `masks[i]` is operand `i + 1`.
+        check_dtype(operand + 1, mask.dtype, DType::Bit)?;
+        let [length] = mask.shape[..] else {
+            return Err(MathOpError::MaskNotVector {
+                ndim: mask.shape.len(),
+            });
+        };
+        let selected = x.shape[axis];
+        if !may_equal(length, selected) {
+            return Err(MathOpError::MaskLength {
+                mask: length,
+                axis,
+                length: selected,
+            });
+        }
+        // The mask and the axis are the same length at run time, so either bound holds; take the
+        // tighter one.
+        shape[axis] = Dim::Bounded {
+            max: upper_bound(selected).min(upper_bound(length)),
+        };
+    }
+    Ok(TensorType {
+        dtype: x.dtype,
+        shape,
     })
 }
 

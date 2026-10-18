@@ -14,6 +14,7 @@
 
 mod binary;
 mod bitwise;
+mod boolean_mask;
 mod broadcast_to;
 mod cast;
 mod constant;
@@ -25,6 +26,7 @@ mod shot_loop;
 
 pub use binary::{Add, Divide, Multiply, Power, Remainder, Subtract};
 pub use bitwise::{BitwiseAnd, BitwiseNot, BitwiseOr, BitwiseXor, Parity};
+pub use boolean_mask::BooleanMask;
 pub use broadcast_to::BroadcastTo;
 pub use cast::Cast;
 pub use constant::Constant;

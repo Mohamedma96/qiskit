@@ -47,6 +47,18 @@ pub enum MathOpError {
     /// The requested axis was out of bounds for the tensor's number of dimensions.
     #[error("axis {axis} is out of bounds for tensor with {ndim} dimension(s)")]
     InvalidAxis { axis: usize, ndim: usize },
+    /// A boolean mask operand is not a one-dimensional tensor.
+    #[error("mask must be a 1-D tensor, got {ndim} dimension(s)")]
+    MaskNotVector { ndim: usize },
+    /// A boolean mask's length cannot match the axis it selects along.
+    ///
+    /// The sizes are [`Dim`]s so that this serves both type inference, where one or both may be
+    /// bounded rather than known, and evaluation, where both are concrete.
+    #[error("mask of length {mask} cannot select along axis {axis} of length {length}")]
+    MaskLength { mask: Dim, axis: usize, length: Dim },
+    /// The same axis was given twice, so two masks would compete over which entries survive.
+    #[error("axis {axis} is masked more than once")]
+    RepeatedAxis { axis: usize },
 }
 
 /// Validate that an operand's dtype is `expected`, naming the offending operand by its position.
