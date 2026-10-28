@@ -49,6 +49,23 @@ pub(super) fn elementwise_binary(
     })
 }
 
+/// Infer the result type of an elementwise comparison over two operands.
+///
+/// The operand dtypes promote and the shapes broadcast as for any other elementwise operation, but
+/// the result is always `Bit`: a comparison answers a question about its operands rather than
+/// producing another value of their type. `accepts` is checked against the promoted dtype, so an
+/// ordering can refuse the complex dtypes without refusing a complex operand beside a real one.
+pub(super) fn elementwise_compare(
+    x: &TensorType,
+    y: &TensorType,
+    accepts: Accepts,
+) -> Result<TensorType, MathOpError> {
+    Ok(TensorType {
+        dtype: DType::Bit,
+        ..elementwise_binary(x, y, accepts)?
+    })
+}
+
 /// Infer the result type of an elementwise operation over one operand.
 ///
 /// The dtype and shape are unchanged.
@@ -183,6 +200,41 @@ mod test {
             elementwise_binary(&ty(DType::F64, &[3]), &ty(DType::F64, &[4]), any).unwrap_err(),
             MathOpError::Tensor(TensorError::DimShapeMismatch { lhs, rhs })
                 if lhs == [Dim::Fixed(3)] && rhs == [Dim::Fixed(4)]
+        ));
+    }
+
+    #[test]
+    fn test_elementwise_compare_is_elementwise_binary_answering_in_bits() {
+        // The shape is whatever the operands broadcast to, and only the dtype differs from the
+        // arithmetic rule: a comparison answers in bits whatever it compared.
+        for (lhs, rhs) in [(DType::I32, DType::F32), (DType::Bit, DType::Bit)] {
+            let (x, y) = (ty(lhs, &[3, 1]), ty(rhs, &[4]));
+            assert_eq!(
+                elementwise_compare(&x, &y, any).unwrap(),
+                ty(DType::Bit, &[3, 4])
+            );
+            assert_eq!(
+                elementwise_compare(&x, &y, any).unwrap().shape,
+                elementwise_binary(&x, &y, any).unwrap().shape,
+                "the shape rule is the one the arithmetic ops use"
+            );
+        }
+    }
+
+    #[test]
+    fn test_elementwise_compare_admits_the_promoted_dtype() {
+        // `accepts` is checked against the promotion, so an operand a comparison refuses on its
+        // own is still legal beside one it promotes to something admitted.
+        assert_eq!(
+            elementwise_compare(&ty(DType::Bit, &[2]), &ty(DType::F64, &[2]), floats).unwrap(),
+            ty(DType::Bit, &[2])
+        );
+        assert!(matches!(
+            elementwise_compare(&ty(DType::Bit, &[2]), &ty(DType::Bit, &[2]), floats).unwrap_err(),
+            MathOpError::UnsupportedPromotion {
+                dtype: DType::Bit,
+                ..
+            }
         ));
     }
 

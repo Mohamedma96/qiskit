@@ -16,6 +16,27 @@ use ndarray::{ArcArrayD, IxDyn, Zip};
 
 use super::TensorError;
 
+/// Apply `op` to two broadcast operands, producing an array of a different element type.
+///
+/// This is [`broadcast_elementwise`] for an operation whose result is not of the operand type, such
+/// as a comparison, which maps two numbers to a bit.
+pub(super) fn broadcast_elementwise_into<T, U, F>(
+    a: &ArcArrayD<T>,
+    b: &ArcArrayD<T>,
+    op: F,
+) -> Result<ArcArrayD<U>, TensorError>
+where
+    T: Clone,
+    U: Clone,
+    F: Fn(&T, &T) -> U,
+{
+    let out_shape = broadcast_shape(a.shape(), b.shape())?;
+    let out_ix = IxDyn(&out_shape);
+    let a_bc = a.broadcast(out_ix.clone()).expect("broadcast failed");
+    let b_bc = b.broadcast(out_ix).expect("broadcast failed");
+    Ok(Zip::from(a_bc).and(b_bc).map_collect(op).into_shared())
+}
+
 /// Pair up the axes of two shapes, right-aligned, padding the shorter one with `pad`.
 pub(super) fn align_axes<'a, T: Copy>(
     a: &'a [T],
